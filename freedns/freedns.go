@@ -1,16 +1,21 @@
 package freedns
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
+	"log"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 
 	logf "github.com/cert-manager/cert-manager/pkg/logs"
 	"golang.org/x/net/html"
+	"golang.org/x/net/proxy"
 )
 
 type FreeDNSOperations interface {
@@ -27,6 +32,10 @@ type FreeDNS struct {
 	LoggedOut  bool
 }
 
+type contextDialer interface {
+	DialContext(ctx context.Context, network, address string) (net.Conn, error)
+}
+
 const URI_LOGIN = "https://freedns.afraid.org/zc.php?step=2"
 const URI_DOMAIN = "https://freedns.afraid.org/domain/"
 const URI_ADD_RECORD = "https://freedns.afraid.org/subdomain/save.php?step=2"
@@ -41,43 +50,89 @@ func GetDomainFromZone(Zone string) string {
 	return strings.Join(_segs, ".")
 }
 
-func _HttpRequest(method string, url string, PostData url.Values, ExCookie *http.Cookie) (*http.Response, string, error) {
-	client := http.Client{
+func newHTTPClient() (*http.Client, error) {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+
+	socksAddr := os.Getenv("SOCKS5_PROXY")
+	if socksAddr != "" {
+		log.Printf("using SOCKS5 proxy from SOCKS5_PROXY: %s", redactProxyAddr(socksAddr))
+		dialer, err := proxy.SOCKS5("tcp", socksAddr, nil, proxy.Direct)
+		if err != nil {
+			return nil, err
+		}
+
+		ctxDialer, ok := dialer.(interface {
+			DialContext(ctx context.Context, network, address string) (net.Conn, error)
+		})
+		if !ok {
+			return nil, fmt.Errorf("SOCKS5 dialer does not support DialContext")
+		}
+
+		transport.Proxy = nil
+		transport.DialContext = ctxDialer.DialContext
+	} else {
+		transport.Proxy = http.ProxyFromEnvironment
+	}
+
+	return &http.Client{
+		Transport: transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
+	}, nil
+}
+
+func redactProxyAddr(addr string) string {
+	u, err := url.Parse(addr)
+	if err == nil && u.User != nil {
+		u.User = url.UserPassword("xxxxx", "xxxxx")
+		return u.String()
 	}
 
-	var req *http.Request
-	var err error
+	return addr
+}
 
-	if method == "GET" {
-		req, err = http.NewRequest(method, url, nil)
-	} else if method == "POST" {
-		req, err = http.NewRequest(method, url, strings.NewReader(PostData.Encode()))
-		req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
-	} else {
-		return nil, "", errors.New("Method + \"" + method + "\" is not supported")
+func _HttpRequest(method string, reqURL string, postData url.Values, exCookie *http.Cookie) (*http.Response, string, error) {
+	client, err := newHTTPClient()
+	if err != nil {
+		return nil, "", err
 	}
 
+	var body io.Reader
+
+	switch method {
+	case http.MethodGet:
+		body = nil
+
+	case http.MethodPost:
+		body = strings.NewReader(postData.Encode())
+
+	default:
+		return nil, "", fmt.Errorf("method %q is not supported", method)
+	}
+
+	req, err := http.NewRequest(method, reqURL, body)
 	if err != nil {
 		return nil, "", err
 	}
 
 	req.Header.Set("User-Agent", "github.com/tgckpg/cert-manager-webhook-freedns (2022.03.15)")
 
-	if ExCookie != nil {
-		req.AddCookie(ExCookie)
+	if method == http.MethodPost {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+
+	if exCookie != nil {
+		req.AddCookie(exCookie)
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
 		return resp, "", err
 	}
+	defer resp.Body.Close()
 
-	respData, err := ioutil.ReadAll(resp.Body)
-	resp.Body.Close()
-
+	respData, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return resp, "", err
 	}
@@ -97,6 +152,7 @@ func (dnsObj *FreeDNS) Login(Username string, Password string) error {
 	if err != nil {
 		return err
 	}
+	fmt.Println(err)
 
 	if strings.Contains(respString, "Invalid UserID/Pass") {
 		return errors.New("Invalid UserID/Pass")
