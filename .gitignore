@@ -4,7 +4,8 @@
 *.dll
 *.so
 *.dylib
-.idea
+/.idea/
+*.iml
 # Test binary, build with `go test -c`
 *.test
 
@@ -14,6 +15,10 @@
 # Ignore the built binary
 cert-manager-webhook-freedns
 
+# dev-local build settings
+*.work
+
 # Make artifacts
+bin
 _out
 _test

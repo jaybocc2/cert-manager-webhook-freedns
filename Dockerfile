@@ -1,24 +1,29 @@
-FROM golang:1.22-alpine3.19 AS build_deps
+# syntax=docker/dockerfile:1.7
 
-RUN apk add --no-cache git
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine3.23 AS build
 
 WORKDIR /workspace
 
-COPY go.mod .
-COPY go.sum .
+ARG TARGETOS
+ARG TARGETARCH
 
-RUN go mod download
+COPY go.mod go.sum ./
 
-FROM build_deps AS build
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 go build -o webhook -ldflags '-w -extldflags "-static"' .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 \
+    GOOS=$TARGETOS \
+    GOARCH=$TARGETARCH \
+    go build -trimpath -o /out/webhook -ldflags='-s -w' .
 
-FROM alpine:3.18
+FROM scratch
 
-RUN apk add --no-cache ca-certificates
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=build /out/webhook /usr/local/bin/webhook
 
-COPY --from=build /workspace/webhook /usr/local/bin/webhook
-
-ENTRYPOINT ["webhook"]
+ENTRYPOINT ["/usr/local/bin/webhook"]

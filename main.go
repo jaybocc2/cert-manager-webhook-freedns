@@ -10,15 +10,17 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
-	logf "github.com/cert-manager/cert-manager/pkg/logs"
-	"github.com/cert-manager/webhook-freedns/freedns"
 	"github.com/cert-manager/cert-manager/pkg/acme/webhook/apis/acme/v1alpha1"
 	"github.com/cert-manager/cert-manager/pkg/acme/webhook/cmd"
+	logf "github.com/cert-manager/cert-manager/pkg/logs"
+	"github.com/cert-manager/webhook-freedns/freedns"
 )
 
 var GroupName = os.Getenv("GROUP_NAME")
 var UserName = os.Getenv("FREEDNS_USERNAME")
 var Password = os.Getenv("FREEDNS_PASSWORD")
+
+var logger = logf.Log.WithName("freedns")
 
 func main() {
 	if GroupName == "" {
@@ -97,7 +99,9 @@ func (c *customDNSProviderSolver) Name() string {
 // cert-manager itself will later perform a self check to ensure that the
 // solver has correctly configured the DNS provider.
 func (c *customDNSProviderSolver) Present(ch *v1alpha1.ChallengeRequest) error {
-	dnsObj := freedns.FreeDNS{}
+	dnsObj := freedns.FreeDNS{
+		Logger: logger,
+	}
 	err := dnsObj.Login(UserName, Password)
 	if err != nil {
 		return err
@@ -141,7 +145,7 @@ func (c *customDNSProviderSolver) CleanUp(ch *v1alpha1.ChallengeRequest) error {
 	_key := "\"" + ch.Key + "\""
 	_id, err := c.freedns.FindRecord(_addr, "TXT", _key)
 
-	logf.V(logf.InfoLevel).Info(fmt.Sprintf("(id=%s) TXT Record: %s %s", _id, _addr, _key))
+	logger.V(logf.InfoLevel).Info(fmt.Sprintf("(id=%s) TXT Record: %s %s", _id, _addr, _key))
 
 	if _id != "" {
 		err = c.freedns.DeleteRecord(_id)
@@ -171,6 +175,8 @@ func (c *customDNSProviderSolver) Initialize(kubeClientConfig *rest.Config, stop
 		return err
 	}
 	c.client = cl
+
+	logger.V(logf.InfoLevel).Info("FreeDNS webhook starting", "build", freedns.Timestamp, "tag", freedns.IMAGE_TAG)
 
 	///// END OF CODE TO MAKE KUBERNETES CLIENTSET AVAILABLE
 	return nil

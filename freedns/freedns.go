@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	logf "github.com/cert-manager/cert-manager/pkg/logs"
+	logr "github.com/go-logr/logr"
 	"golang.org/x/net/html"
 	"golang.org/x/net/proxy"
 )
@@ -30,6 +31,7 @@ type FreeDNS struct {
 	AuthCookie *http.Cookie
 	DomainId   string
 	LoggedOut  bool
+	Logger     logr.Logger
 }
 
 type contextDialer interface {
@@ -152,7 +154,6 @@ func (dnsObj *FreeDNS) Login(Username string, Password string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(err)
 
 	if strings.Contains(respString, "Invalid UserID/Pass") {
 		return errors.New("Invalid UserID/Pass")
@@ -211,7 +212,7 @@ loop:
 			break loop
 		case html.TextToken:
 			if inBold && strings.TrimSpace(htmlTokens.Token().Data) == DomainName {
-				logf.V(logf.InfoLevel).Info(fmt.Sprintf("Found HTMLTextNode that contains \"%s\", try looking for domain id", DomainName))
+				dnsObj.Logger.V(logf.InfoLevel).Info(fmt.Sprintf("Found HTMLTextNode that contains \"%s\", try looking for domain id", DomainName))
 				lookForA = true
 			}
 			// The [Manage] anchor is next to the bold tag
@@ -226,7 +227,7 @@ loop:
 					_href := string(attrValue)
 					if string(attrKey) == "href" && strings.HasPrefix(_href, "/subdomain/?limit=") {
 						dnsObj.DomainId = strings.TrimPrefix(_href, "/subdomain/?limit=")
-						logf.V(logf.InfoLevel).Info(fmt.Sprintf("Domain id for \"%s\" is %s", DomainName, dnsObj.DomainId))
+						dnsObj.Logger.V(logf.InfoLevel).Info(fmt.Sprintf("Domain id for \"%s\" is %s", DomainName, dnsObj.DomainId))
 						break loop
 					}
 					if !moreAttr {
@@ -249,7 +250,7 @@ func (dnsObj *FreeDNS) AddRecord(RecordType string, Subdomain string, Address st
 		return errors.New("No domain selected")
 	}
 
-	logf.V(logf.InfoLevel).Info(fmt.Sprintf("Adding %s Record: %s %s", RecordType, Subdomain, Address))
+	dnsObj.Logger.V(logf.InfoLevel).Info(fmt.Sprintf("Adding %s Record: %s %s", RecordType, Subdomain, Address))
 
 	recordData := url.Values{}
 	recordData.Set("type", RecordType)
@@ -270,7 +271,7 @@ func (dnsObj *FreeDNS) AddRecord(RecordType string, Subdomain string, Address st
 
 		// Record already exists, treat this as success
 		if strings.Contains(respStr, "already have another already existent") {
-			logf.V(logf.InfoLevel).Info("Record already exists")
+			dnsObj.Logger.V(logf.InfoLevel).Info("Record already exists")
 			return nil
 		}
 
@@ -330,7 +331,7 @@ func (dnsObj *FreeDNS) AddRecord(RecordType string, Subdomain string, Address st
 	}
 
 	if strings.HasPrefix(_Location.Path, "/zc.php") {
-		logf.V(logf.DebugLevel).Info("Error on AddRecord: Cookie expired")
+		dnsObj.Logger.V(logf.DebugLevel).Info("Error on AddRecord: Cookie expired")
 		return errors.New("dns_cookie maybe expired")
 	}
 
@@ -339,7 +340,7 @@ func (dnsObj *FreeDNS) AddRecord(RecordType string, Subdomain string, Address st
 
 func (dnsObj *FreeDNS) DeleteRecord(RecordId string) error {
 
-	logf.V(logf.InfoLevel).Info(fmt.Sprintf("(id=%s) Removing Record", RecordId))
+	dnsObj.Logger.V(logf.InfoLevel).Info(fmt.Sprintf("(id=%s) Removing Record", RecordId))
 
 	resp, _, err := _HttpRequest("GET", fmt.Sprintf(URI_DELETE_RECORD, RecordId), nil, dnsObj.AuthCookie)
 	if err != nil {
@@ -443,7 +444,7 @@ loop:
 	// Begin deep search for truncated records
 	htmlAddr := strings.ReplaceAll(html.EscapeString(Address), "&#34;", "&quot;")
 	for _, RecordId := range DeepSearchCandidates {
-		logf.V(logf.DebugLevel).Info("Searching in " + RecordId)
+		dnsObj.Logger.V(logf.DebugLevel).Info("Searching in " + RecordId)
 		_, respStr, err := _HttpRequest("GET", URI_SUBDOMAIN_EDIT+RecordId, nil, dnsObj.AuthCookie)
 		if err != nil {
 			continue

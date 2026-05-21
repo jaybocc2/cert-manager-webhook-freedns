@@ -46,10 +46,17 @@ Additionally, the following names can be customized
 * acme.freedns.afraid.org
 
 ### UPDATE
-2024-10-30
+## 2026-05-21
+- Merged the latest upstream changes.
+- Added `SOCKS5_PROXY` support to work around FreeDNS IP-based blocking.
+- Added Helm values support for pinning container images by digest.
+- Fixed the logging implementation to use cert-manager’s logging infrastructure correctly.
+- Moved the default container image registry from Docker Hub to GHCR.
+
+## 2024-10-30
 - Merged from upstream, now works on 1.31 cluster
 
-2024-11-02
+## 2024-11-02
 - Webhook will now properly logs its actions
 - Removed permissions to read secrets from pod for obvious reansons
   - Authentication details are now requested from Helm
